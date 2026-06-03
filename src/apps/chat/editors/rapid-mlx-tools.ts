@@ -356,7 +356,19 @@ export function getEnabledRapidMlxTools(): AixTools_ToolDefinition[] {
   return ALL_RAPID_MLX_TOOLS.filter((t) => {
     // aixFunctionCallTool returns { type: 'function_call', function_call: { name } }
     const id = (t as { function_call?: { name?: string } }).function_call?.name as RapidMlxToolId | undefined;
-    return id ? !!cfg[id]?.enabled : false;
+    if (!id) return false;
+    const state = cfg[id];
+    if (!state?.enabled) return false;
+    // BYOK gate: web_search needs a Tavily or Brave key. Without one,
+    // every invocation hits "Set a Tavily key" → the model treats
+    // that as "search didn't work, try a different query" and loops
+    // until max_tokens dies. Treat key-less as not-enabled so the
+    // tool isn't even advertised to the model — caught by the
+    // 2026-06-03 stock-market test on the qwopus-27b-8bit alias.
+    if (id === 'web_search' && !(state.apiKey?.trim() || state.braveKey?.trim())) {
+      return false;
+    }
+    return true;
   });
 }
 

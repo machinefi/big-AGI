@@ -277,6 +277,11 @@ export async function aixChatGenerateContent_DMessage_FromConversation(
   // others
   clientOptions: AixClientOptions,
   onStreamingUpdate: (update: AixChatGenerateContent_DMessageGuts, isDone: boolean) => MaybePromise<void>,
+  // rapid-mlx static-export fork: optional tools to advertise to the
+  // model on every chat turn. When set, the model sees them in the
+  // OpenAI tools wire field and can autonomously emit tool_calls.
+  // Caller (chat-persona.ts) is responsible for the execution loop.
+  rapidMlxTools?: AixAPIChatGenerate_Request['tools'],
 ): Promise<AixChatGenerateContent_FromConversation_Result> {
 
   let lastDMessage: AixChatGenerateContent_DMessageGuts = {
@@ -292,6 +297,7 @@ export async function aixChatGenerateContent_DMessage_FromConversation(
     const aixChatContentGenerateRequest: AixAPIChatGenerate_Request = {
       systemMessage: await aixCGR_SystemMessage_FromDMessageOrThrow(chatSystemInstruction),
       chatSequence: await aixCGR_ChatSequence_FromDMessagesOrThrow(chatHistoryWithoutSystemMessages),
+      ...(rapidMlxTools?.length ? { tools: rapidMlxTools } : {}),
     };
 
     // Cross-turn upstream-container resolution. Walks history newest-first, stops at the first

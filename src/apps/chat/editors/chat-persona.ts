@@ -7,15 +7,23 @@ import type { DLLMId } from '~/common/stores/llms/llms.types';
 import { AudioGenerator } from '~/common/util/audio/AudioGenerator';
 import { ConversationsManager } from '~/common/chat-overlay/ConversationsManager';
 import { DMessage, MESSAGE_FLAG_NOTIFY_COMPLETE, messageWasInterruptedAtStart } from '~/common/stores/chat/chat.message';
+import { isContentFragment } from '~/common/stores/chat/chat.fragments';
 import { getLabsHighPerformance } from '~/common/stores/store-ux-labs';
 
 import { PersonaChatMessageSpeak } from './persona/PersonaChatMessageSpeak';
+import { RAPID_MLX_TOOLS, executeRapidMlxTool } from './rapid-mlx-tools';
 import { getChatAutoAI, getChatThinkingPolicy, getIsNotificationEnabledForModel } from '../store-app-chat';
 import { getInstantAppChatPanesCount } from '../components/panes/store-panes-manager';
 
 
 // configuration
 export const CHATGENERATE_RESPONSE_PLACEHOLDER = '...'; // 💫 ..., 🖊️ ...
+
+// rapid-mlx fork: cap the agent loop so a misbehaving model can't burn
+// through tokens forever calling tools. Five rounds is enough for any
+// realistic multi-step query (the built-in tools — calculator, now —
+// don't compose in long chains).
+const RAPID_MLX_MAX_TOOL_ROUNDS = 5;
 
 
 export interface PersonaProcessorInterface {
@@ -26,6 +34,12 @@ export interface PersonaProcessorInterface {
 /**
  * The main "chat" function.
  * @returns `true` if the operation was successful, `false` otherwise.
+ *
+ * rapid-mlx fork: this used to be a single aix call. Now it's a loop
+ * that re-calls aix whenever the model emits a tool_invocation,
+ * executing the tool client-side (see `./rapid-mlx-tools.ts`) and
+ * appending the tool_response back to the assistant message so the
+ * next inference round sees it. Capped at RAPID_MLX_MAX_TOOL_ROUNDS.
  */
 export async function runPersonaOnConversationHead(
   assistantLlmId: DLLMId,
@@ -34,16 +48,17 @@ export async function runPersonaOnConversationHead(
 
   const cHandler = ConversationsManager.getHandler(conversationId);
 
-  const _history = cHandler.historyViewHeadOrThrow('runPersonaOnConversationHead') as Readonly<DMessage[]>;
-  if (_history.length === 0)
+  const _initialHistory = cHandler.historyViewHeadOrThrow('runPersonaOnConversationHead') as Readonly<DMessage[]>;
+  if (_initialHistory.length === 0)
     return false;
 
-  // split pre dynamic-personas
-  let { chatSystemInstruction, chatHistory } = splitSystemMessageFromHistory(_history);
+  let { chatSystemInstruction, chatHistory } = splitSystemMessageFromHistory(_initialHistory);
 
-  // assistant response placeholder
   const isNotifyEnabled = getIsNotificationEnabledForModel(assistantLlmId);
-  const { assistantMessageId } = cHandler.messageAppendAssistantPlaceholder(
+
+  // initial assistant placeholder; reassigned on each tool round so the
+  // model's next pass writes into a fresh message.
+  let { assistantMessageId } = cHandler.messageAppendAssistantPlaceholder(
     CHATGENERATE_RESPONSE_PLACEHOLDER,
     {
       purposeId: chatSystemInstruction?.purposeId,
@@ -54,48 +69,97 @@ export async function runPersonaOnConversationHead(
 
   const parallelViewCount = getLabsHighPerformance() ? 0 : getInstantAppChatPanesCount();
 
-  // ai follow-up operations (fire/forget)
+  // ai follow-up operations (fire/forget) — read once, applied after the
+  // whole tool loop finishes.
   const { autoSpeak, autoSuggestDiagrams, autoSuggestHTMLUI, autoSuggestQuestions, autoTitleChat } = getChatAutoAI();
-
-  // AutoSpeak
   const autoSpeaker: PersonaProcessorInterface | null = autoSpeak !== 'off' ? new PersonaChatMessageSpeak(autoSpeak) : null;
 
-  // when an abort controller is set, the UI switches to the "stop" mode
+  // one abort controller across all tool rounds — Ctrl-C kills the chain.
   const abortController = new AbortController();
   cHandler.setAbortController(abortController, 'chat-persona');
 
-  // stream the assistant's messages directly to the state store
-  const messageStatus = await aixChatGenerateContent_DMessage_FromConversation(
-    assistantLlmId,
-    chatSystemInstruction,
-    chatHistory,
-    'conversation',
-    conversationId,
-    { abortSignal: abortController.signal, throttleParallelThreads: parallelViewCount },
-    (messageOverwrite: AixChatGenerateContent_DMessageGuts, messageComplete: boolean) => {
+  // track the *most recent* aix result; the auto-follow-up + abort logic
+  // below references it after the loop exits.
+  let messageStatus!: Awaited<ReturnType<typeof aixChatGenerateContent_DMessage_FromConversation>>;
 
-      // Note: there was an abort check here, but it removed the last packet, which contained the cause and final text.
-      // if (abortController.signal.aborted)
-      //   console.warn('runPersonaOnConversationHead: Aborted', { conversationId, assistantLlmId, messageOverwrite });
+  let toolRound = 0;
+  while (true) {
 
-      // fragments and generator are already immutable (new refs per update) - no deep clone needed
-      const { fragments, ...rest } = messageOverwrite;
+    // capture the current id so the streaming callback closes over the
+    // correct message even after we rotate to the next round.
+    const writeTargetId = assistantMessageId;
 
-      // [Cosmetic Logic] if the content hasn't come yet, don't replace the fragments to still show the placeholder
-      const includeFragments = !!fragments?.length || messageComplete || !messageOverwrite.pendingIncomplete;
+    messageStatus = await aixChatGenerateContent_DMessage_FromConversation(
+      assistantLlmId,
+      chatSystemInstruction,
+      chatHistory,
+      'conversation',
+      conversationId,
+      { abortSignal: abortController.signal, throttleParallelThreads: parallelViewCount },
+      (messageOverwrite: AixChatGenerateContent_DMessageGuts, messageComplete: boolean) => {
+        const { fragments, ...rest } = messageOverwrite;
+        const includeFragments = !!fragments?.length || messageComplete || !messageOverwrite.pendingIncomplete;
+        cHandler.messageEdit(writeTargetId, { ...(includeFragments && { fragments }), ...rest }, messageComplete, false);
+        autoSpeaker?.handleMessage(messageOverwrite, messageComplete);
+      },
+      RAPID_MLX_TOOLS,
+    );
 
-      // update the message
-      cHandler.messageEdit(assistantMessageId, { ...(includeFragments && { fragments }), ...rest }, messageComplete, false);
+    // detect tool invocations in the just-completed assistant turn.
+    const toolInvocations: { id: string; name: string; args: string }[] = [];
+    for (const f of messageStatus.lastDMessage.fragments) {
+      if (isContentFragment(f) && f.part.pt === 'tool_invocation' && f.part.invocation.type === 'function_call') {
+        toolInvocations.push({
+          id: f.part.id,
+          name: f.part.invocation.name,
+          args: f.part.invocation.args ?? '',
+        });
+      }
+    }
 
-      // if requested, speak the message
-      autoSpeaker?.handleMessage(messageOverwrite, messageComplete);
+    // failure / abort / no tool calls => exit the loop and let the
+    // tail logic (notify, autoTitle, autoFollowUp) run as before.
+    if (
+      messageStatus.outcome !== 'completed'
+      || abortController.signal.aborted
+      || toolInvocations.length === 0
+    )
+      break;
 
-      // if (messageComplete)
-      //   AudioGenerator.basicAstralChimes({ volume: 0.4 }, 0, 2, 250);
-    },
-  );
+    if (++toolRound > RAPID_MLX_MAX_TOOL_ROUNDS) {
+      console.warn(`[rapid-mlx] tool loop hit RAPID_MLX_MAX_TOOL_ROUNDS (${RAPID_MLX_MAX_TOOL_ROUNDS}); stopping.`);
+      break;
+    }
 
-  // final message update (needed only in case of error)
+    // execute each tool locally and append the response fragment to
+    // the *same* assistant message that holds the matching invocation.
+    // The server adapter (openai.chatCompletions.ts) splits tool_response
+    // out into its own role: 'tool' wire message keyed by invocation id.
+    for (const inv of toolInvocations) {
+      const responseFragment = executeRapidMlxTool(inv.id, inv.name, inv.args);
+      cHandler.messageFragmentAppend(writeTargetId, responseFragment, true, false);
+    }
+
+    // refresh history so the next aix call sees the tool responses we
+    // just appended, then create a fresh assistant placeholder for the
+    // model's continuation pass.
+    const _nextHistory = cHandler.historyViewHeadOrThrow('runPersonaOnConversationHead') as Readonly<DMessage[]>;
+    const split = splitSystemMessageFromHistory(_nextHistory);
+    chatSystemInstruction = split.chatSystemInstruction;
+    chatHistory = split.chatHistory;
+
+    ({ assistantMessageId } = cHandler.messageAppendAssistantPlaceholder(
+      CHATGENERATE_RESPONSE_PLACEHOLDER,
+      {
+        purposeId: chatSystemInstruction?.purposeId,
+        generator: { mgt: 'named', name: assistantLlmId },
+        ...(isNotifyEnabled ? { userFlags: [MESSAGE_FLAG_NOTIFY_COMPLETE] } : {}),
+      },
+    ));
+  }
+
+  // final message update (needed only in case of error on the last
+  // round). assistantMessageId points at the most recently written turn.
   const lastDMessage = messageStatus.lastDMessage;
   if (messageStatus.outcome === 'failed')
     cHandler.messageEdit(assistantMessageId, lastDMessage, true, false);
@@ -103,7 +167,6 @@ export async function runPersonaOnConversationHead(
   // special case: if the last message was aborted and had no content, delete it
   if (messageWasInterruptedAtStart(lastDMessage)) {
     cHandler.messagesDelete([assistantMessageId]);
-    // NOTE: ok to exit here, as the abort was already done
     return false;
   }
 
@@ -113,7 +176,6 @@ export async function runPersonaOnConversationHead(
     AudioGenerator.chatNotifyResponse();
   }
 
-  // check if aborted
   const hasBeenAborted = abortController.signal.aborted;
 
   // clear to send, again
@@ -121,7 +183,6 @@ export async function runPersonaOnConversationHead(
   cHandler.clearAbortController('chat-persona');
 
   if (autoTitleChat) {
-    // fire/forget, this will only set the title if it's not already set
     void autoConversationTitle(conversationId, false);
   }
 
@@ -134,6 +195,5 @@ export async function runPersonaOnConversationHead(
   else if (chatThinkingPolicy === 'discard-all')
     cHandler.historyStripThinking(0);
 
-  // return true if this succeeded
   return messageStatus.outcome === 'completed';
 }

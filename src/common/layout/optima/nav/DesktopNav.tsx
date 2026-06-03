@@ -230,6 +230,14 @@ export function DesktopNav(props: { component: React.ElementType, currentApp?: N
             </div>
             <ArrowOutwardRoundedIcon sx={{ ml: 'auto' }} />
           </MenuItem>
+          <MenuItem component='a' href='https://github.com/raullenchai/Rapid-MLX/issues/new' target='_blank'>
+            <ListItemDecorator>⚡</ListItemDecorator>
+            <div>
+              Improve Rapid-MLX
+              <FormHelperText>Backend bugs, model aliases, share feature</FormHelperText>
+            </div>
+            <ArrowOutwardRoundedIcon sx={{ ml: 'auto' }} />
+          </MenuItem>
           {!!releaseNotesUrl && (
             <MenuItem onClick={handleShowReleaseNotes}>
               <ListItemDecorator>

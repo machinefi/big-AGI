@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { createPortal } from 'react-dom';
 
 import {
   Box,
@@ -59,7 +60,9 @@ const TOOL_META: ToolMeta[] = [
 
 function ButtonRapidMlxTools(_props: {}) {
   const [open, setOpen] = React.useState(false);
-  const rootRef = React.useRef<HTMLDivElement | null>(null);
+  const buttonRef = React.useRef<HTMLButtonElement | null>(null);
+  const sheetRef = React.useRef<HTMLDivElement | null>(null);
+  const [pos, setPos] = React.useState<{ top: number; left: number } | null>(null);
 
   const toolsState = useRapidMlxToolsConfig((s) => s.tools);
   const setEnabled = useRapidMlxToolsConfig((s) => s.setEnabled);
@@ -70,29 +73,62 @@ function ButtonRapidMlxTools(_props: {}) {
     [toolsState],
   );
 
-  // Close on outside click / Esc. Bare-bones: Joy UI's <Dropdown> would
-  // do this but its context is blocked by any wrapper component (e.g.
-  // Tooltip), so we own the open state instead.
+  // Anchor menu above the wrench. Re-measure on open + on viewport
+  // resize. We render via Portal so the composer's overflow:hidden
+  // can't clip us.
+  const updatePos = React.useCallback(() => {
+    const btn = buttonRef.current;
+    if (!btn) return;
+    const r = btn.getBoundingClientRect();
+    const menuWidth = 340;
+    const menuHeightEstimate = 520;
+    const margin = 8;
+    // prefer above the button (most space in a composer-anchored UI);
+    // if the button is near the top of the viewport, drop below instead.
+    const above = r.top > menuHeightEstimate + margin;
+    const top = above
+      ? Math.max(margin, r.top - menuHeightEstimate - 6)
+      : Math.min(window.innerHeight - menuHeightEstimate - margin, r.bottom + 6);
+    const left = Math.min(
+      Math.max(margin, r.left),
+      window.innerWidth - menuWidth - margin,
+    );
+    setPos({ top, left });
+  }, []);
+
+  React.useLayoutEffect(() => {
+    if (!open) { setPos(null); return; }
+    updatePos();
+  }, [open, updatePos]);
+
   React.useEffect(() => {
     if (!open) return;
     const onMouseDown = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (buttonRef.current?.contains(t) || sheetRef.current?.contains(t)) return;
+      setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false);
     };
+    const onResize = () => updatePos();
     document.addEventListener('mousedown', onMouseDown);
     document.addEventListener('keydown', onKey);
+    window.addEventListener('resize', onResize);
+    window.addEventListener('scroll', onResize, true);
     return () => {
       document.removeEventListener('mousedown', onMouseDown);
       document.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('scroll', onResize, true);
     };
-  }, [open]);
+  }, [open, updatePos]);
 
   return (
-    <Box ref={rootRef} sx={{ position: 'relative', display: 'inline-block' }}>
+    <>
       <Tooltip title={open ? 'Click again to close' : `Tools (${enabledCount} enabled)`} placement='top'>
         <IconButton
+          ref={buttonRef}
           variant={enabledCount > 0 ? 'soft' : 'plain'}
           color={enabledCount > 0 ? 'primary' : 'neutral'}
           onClick={() => setOpen((v) => !v)}
@@ -105,23 +141,23 @@ function ButtonRapidMlxTools(_props: {}) {
         </IconButton>
       </Tooltip>
 
-      {open && (
+      {open && pos && typeof document !== 'undefined' && createPortal(
         <Sheet
+          ref={sheetRef}
           role='menu'
           data-rapid-mlx-tools='1'
           variant='outlined'
           sx={{
-            position: 'absolute',
-            bottom: 'calc(100% + 6px)',
-            left: 0,
-            zIndex: 1000,
-            minWidth: 320,
-            maxWidth: 380,
-            maxHeight: '70vh',
+            position: 'fixed',
+            top: pos.top,
+            left: pos.left,
+            zIndex: 1500,
+            width: 340,
+            maxHeight: 'min(520px, calc(100vh - 24px))',
             overflowY: 'auto',
             p: 0.5,
             borderRadius: 'sm',
-            boxShadow: 'md',
+            boxShadow: 'lg',
             bgcolor: 'background.surface',
           }}
         >
@@ -199,9 +235,10 @@ function ButtonRapidMlxTools(_props: {}) {
               Toggles persist per browser. Keys live in localStorage on this device only and are forwarded to the relay per request — never persisted server-side.
             </Typography>
           </ListItem>
-        </Sheet>
+        </Sheet>,
+        document.body,
       )}
-    </Box>
+    </>
   );
 }
 

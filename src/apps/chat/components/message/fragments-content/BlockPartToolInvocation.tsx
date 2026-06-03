@@ -187,8 +187,16 @@ export function BlockPartToolInvocation(props: {
           </IconButton>
 
           {/*<Tooltip title={humanName !== originalName ? `Original: ${originalName}` : undefined} placement='top'>*/}
+          {/*
+             Prefix the invocation title with an arrow so the call side
+             is visually distinct from the response card that renders
+             immediately below it. Without it the chat surface stacks
+             two identical "{humanName}" titles back-to-back; rapid-mlx
+             share testing on Qwopus 3.5 27B produced a confusing
+             "WeatherWeather" header for a single weather lookup.
+          */}
           <Typography level='body-sm' sx={{ fontWeight: 'md' }}>
-            {humanName}
+            {`→ ${humanName}`}
           </Typography>
           {/*</Tooltip>*/}
         </Box>

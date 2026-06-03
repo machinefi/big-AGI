@@ -8,12 +8,12 @@
  */
 export const Brand = {
   Title: {
-    Base: 'Big-AGI',
-    Common: (process.env.NODE_ENV === 'development' ? '[DEV] ' : '') + 'Big-AGI',
+    Base: 'Rapid-MLX on Big-AGI',
+    Common: (process.env.NODE_ENV === 'development' ? '[DEV] ' : '') + 'Rapid-MLX on Big-AGI',
   },
   Meta: {
-    Description: 'Launch the open-source AI workspace for experts. BYO API keys. Compare and tune models, use personas, voice and vision - your data stays local.',
-    SiteName: 'Big-AGI | The Expert\'s AI Workspace',
+    Description: 'Rapid-MLX running on the Big-AGI chat surface — your local Apple Silicon LLM, fronted by a full chat UI with tool calling, personas, and voice. Pair with `rapid-mlx share` for a public link.',
+    SiteName: 'Rapid-MLX on Big-AGI',
     ThemeColor: '#32383E',
     TwitterSite: '@enricoros',
   },

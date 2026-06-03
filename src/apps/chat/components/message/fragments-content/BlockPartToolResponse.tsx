@@ -145,9 +145,18 @@ export function BlockPartToolResponse(props: {
             </Chip>
           )}
 
-          <Chip size='sm' color={envInfo.color} variant='soft' sx={{ ml: 'auto' }}>
-            {envInfo.label}
-          </Chip>
+          {/*
+             Suppress the env badge for browser-executed tools — every
+             rapid-mlx vendored tool runs client-side, so the chip is
+             pure dev metadata that smashes into "WeatherClient"-style
+             concatenation on copy-paste. Keep it for hosted/server
+             tools where the distinction is actionable.
+          */}
+          {environment !== 'client' && (
+            <Chip size='sm' color={envInfo.color} variant='soft' sx={{ ml: 'auto' }}>
+              {envInfo.label}
+            </Chip>
+          )}
         </Box>
 
         {/* Expanded details */}

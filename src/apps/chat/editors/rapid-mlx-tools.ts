@@ -201,6 +201,16 @@ export const ALL_RAPID_MLX_TOOLS: AixTools_ToolDefinition[] = [
     inputSchema: z.object({}),
   }),
   aixFunctionCallTool({
+    name: 'unit_convert',
+    description:
+      'Convert a numeric value between units of length, mass, temperature, or time. Supports common abbreviations (km, mi, m, ft, in, cm, kg, lb, oz, g, c/celsius, f/fahrenheit, k/kelvin, s/sec, min, h/hour, day). Returns the converted numeric value as a string.',
+    inputSchema: z.object({
+      value: z.number().describe('The numeric value to convert, e.g. 26.2.'),
+      from: z.string().describe('Source unit, e.g. "mi", "kg", "F", "h".'),
+      to: z.string().describe('Target unit, e.g. "km", "lb", "C", "min".'),
+    }),
+  }),
+  aixFunctionCallTool({
     name: 'weather',
     description:
       'Look up the current weather for a city, address, or airport code. Returns temperature, conditions, humidity, wind. Uses wttr.in (free, no key).',
@@ -210,7 +220,88 @@ export const ALL_RAPID_MLX_TOOLS: AixTools_ToolDefinition[] = [
         .describe('City name, address, postal code, or airport code, e.g. "Palo Alto", "94301", "SFO", "Tokyo".'),
     }),
   }),
+  aixFunctionCallTool({
+    name: 'wikipedia',
+    description:
+      'Look up the lead paragraph + title + canonical URL of an English Wikipedia article. Use for factual lookups about people, places, events, concepts. Returns {title, summary, url}.',
+    inputSchema: z.object({
+      query: z.string().describe('Article title or topic to search for, e.g. "MLX (machine learning framework)", "Palo Alto, California".'),
+    }),
+  }),
+  aixFunctionCallTool({
+    name: 'currency',
+    description:
+      'Convert an amount between currency codes using daily ECB rates (frankfurter.app). Codes are ISO 4217 (USD, EUR, JPY, GBP, CNY, ...). Returns {amount, from, to, result, rate, date}.',
+    inputSchema: z.object({
+      amount: z.number().describe('Amount in the source currency, e.g. 100.'),
+      from: z.string().describe('Source currency code, e.g. "USD".'),
+      to: z.string().describe('Target currency code, e.g. "JPY".'),
+    }),
+  }),
+  aixFunctionCallTool({
+    name: 'web_search',
+    description:
+      'Search the live web via Tavily and return short snippets. Use when the user asks about recent events, current facts, or anything past the training cutoff. Returns {query, results: [{title, url, snippet}, ...]}.',
+    inputSchema: z.object({
+      query: z.string().describe('A natural-language search query, e.g. "MLX vs MPS performance 2026".'),
+      max_results: z.number().int().min(1).max(10).optional().describe('How many results to return (default 5, max 10).'),
+    }),
+  }),
 ];
+
+
+// Unit conversion — local, no network. Categories don't cross
+// (you can't convert "kg" to "ft"), and within a category we use a
+// canonical SI unit as the pivot. Temperature is special-cased since
+// the conversion isn't a single multiplicative factor.
+const UNIT_TABLE: Record<string, { canonical: string; toCanonical: (v: number) => number; fromCanonical: (v: number) => number; category: string }> = (() => {
+  const tab: Record<string, { canonical: string; toCanonical: (v: number) => number; fromCanonical: (v: number) => number; category: string }> = {};
+  function linear(category: string, canonical: string, aliases: string[], factor: number) {
+    for (const a of aliases) {
+      tab[a.toLowerCase()] = { category, canonical, toCanonical: (v) => v * factor, fromCanonical: (v) => v / factor };
+    }
+  }
+  // length (canonical: meter)
+  linear('length', 'm', ['m', 'meter', 'meters', 'metre', 'metres'], 1);
+  linear('length', 'm', ['km', 'kilometer', 'kilometers', 'kilometre', 'kilometres'], 1000);
+  linear('length', 'm', ['cm', 'centimeter', 'centimeters'], 0.01);
+  linear('length', 'm', ['mm', 'millimeter', 'millimeters'], 0.001);
+  linear('length', 'm', ['mi', 'mile', 'miles'], 1609.344);
+  linear('length', 'm', ['yd', 'yard', 'yards'], 0.9144);
+  linear('length', 'm', ['ft', 'foot', 'feet'], 0.3048);
+  linear('length', 'm', ['in', 'inch', 'inches'], 0.0254);
+  linear('length', 'm', ['nmi', 'nm', 'nautical_mile', 'nautical_miles'], 1852);
+  // mass (canonical: kilogram)
+  linear('mass', 'kg', ['kg', 'kilogram', 'kilograms'], 1);
+  linear('mass', 'kg', ['g', 'gram', 'grams'], 0.001);
+  linear('mass', 'kg', ['mg', 'milligram', 'milligrams'], 1e-6);
+  linear('mass', 'kg', ['lb', 'lbs', 'pound', 'pounds'], 0.45359237);
+  linear('mass', 'kg', ['oz', 'ounce', 'ounces'], 0.028349523125);
+  linear('mass', 'kg', ['t', 'tonne', 'tonnes', 'metric_ton'], 1000);
+  // time (canonical: second)
+  linear('time', 's', ['s', 'sec', 'secs', 'second', 'seconds'], 1);
+  linear('time', 's', ['ms', 'millisecond', 'milliseconds'], 1e-3);
+  linear('time', 's', ['min', 'mins', 'minute', 'minutes'], 60);
+  linear('time', 's', ['h', 'hr', 'hrs', 'hour', 'hours'], 3600);
+  linear('time', 's', ['d', 'day', 'days'], 86400);
+  linear('time', 's', ['wk', 'week', 'weeks'], 604800);
+  // temperature (canonical: kelvin)
+  const tempCanonical = 'k';
+  const tempCat = 'temperature';
+  tab['k'] = tab['kelvin'] = { category: tempCat, canonical: tempCanonical, toCanonical: (v) => v, fromCanonical: (v) => v };
+  tab['c'] = tab['celsius'] = { category: tempCat, canonical: tempCanonical, toCanonical: (v) => v + 273.15, fromCanonical: (v) => v - 273.15 };
+  tab['f'] = tab['fahrenheit'] = { category: tempCat, canonical: tempCanonical, toCanonical: (v) => (v - 32) * (5 / 9) + 273.15, fromCanonical: (v) => (v - 273.15) * (9 / 5) + 32 };
+  return tab;
+})();
+
+function convertUnit(value: number, from: string, to: string): number {
+  const a = UNIT_TABLE[from.toLowerCase()];
+  const b = UNIT_TABLE[to.toLowerCase()];
+  if (!a) throw new Error('unknown source unit: ' + from);
+  if (!b) throw new Error('unknown target unit: ' + to);
+  if (a.category !== b.category) throw new Error("can't convert between " + a.category + ' and ' + b.category);
+  return b.fromCanonical(a.toCanonical(value));
+}
 
 
 // Pull the relay base URL out of the persisted Big-AGI app-models
@@ -276,6 +367,16 @@ export async function executeRapidMlxTool(
         payload = { result: new Date().toISOString() };
         break;
       }
+      case 'unit_convert': {
+        const value = Number(args?.value);
+        const from = String(args?.from ?? '').trim();
+        const to = String(args?.to ?? '').trim();
+        if (!Number.isFinite(value)) throw new Error('value must be a finite number');
+        if (!from || !to) throw new Error('from and to are required');
+        const out = convertUnit(value, from, to);
+        payload = { value: String(value), from, to, result: String(out) };
+        break;
+      }
       case 'weather': {
         const location = String(args?.location ?? '').trim();
         if (!location) throw new Error('location is required');
@@ -284,6 +385,61 @@ export async function executeRapidMlxTool(
         const url = relay + '/tool/weather?location=' + encodeURIComponent(location);
         const res = await fetch(url, { method: 'GET', headers: { 'Accept': 'application/json' } });
         if (!res.ok) throw new Error('weather lookup failed: HTTP ' + res.status);
+        payload = await res.json();
+        break;
+      }
+      case 'wikipedia': {
+        const query = String(args?.query ?? '').trim();
+        if (!query) throw new Error('query is required');
+        const relay = getRelayBase();
+        if (!relay) throw new Error('no relay configured (open a share URL first)');
+        const url = relay + '/tool/wikipedia?query=' + encodeURIComponent(query);
+        const res = await fetch(url, { method: 'GET', headers: { 'Accept': 'application/json' } });
+        if (!res.ok) throw new Error('wikipedia lookup failed: HTTP ' + res.status);
+        payload = await res.json();
+        break;
+      }
+      case 'currency': {
+        const amount = Number(args?.amount);
+        const from = String(args?.from ?? '').trim().toUpperCase();
+        const to = String(args?.to ?? '').trim().toUpperCase();
+        if (!Number.isFinite(amount)) throw new Error('amount must be a finite number');
+        if (!from || !to) throw new Error('from and to are required');
+        const relay = getRelayBase();
+        if (!relay) throw new Error('no relay configured (open a share URL first)');
+        const url = relay + '/tool/currency?amount=' + encodeURIComponent(String(amount)) + '&from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to);
+        const res = await fetch(url, { method: 'GET', headers: { 'Accept': 'application/json' } });
+        if (!res.ok) throw new Error('currency lookup failed: HTTP ' + res.status);
+        payload = await res.json();
+        break;
+      }
+      case 'web_search': {
+        const query = String(args?.query ?? '').trim();
+        const maxResults = Number(args?.max_results);
+        if (!query) throw new Error('query is required');
+        // BYOK: read the user's Tavily key out of the tools-config store.
+        const cfg = getRapidMlxToolsConfig();
+        const key = (cfg.web_search?.apiKey ?? '').trim();
+        if (!key) throw new Error('Tavily key not set in the tools menu');
+        const relay = getRelayBase();
+        if (!relay) throw new Error('no relay configured (open a share URL first)');
+        const url = relay + '/tool/web_search';
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'X-Tool-Key': key,
+          },
+          body: JSON.stringify({
+            query,
+            max_results: Number.isFinite(maxResults) ? maxResults : 5,
+          }),
+        });
+        if (!res.ok) {
+          const errText = await res.text().catch(() => '');
+          throw new Error('web search failed: HTTP ' + res.status + (errText ? ' — ' + errText.slice(0, 160) : ''));
+        }
         payload = await res.json();
         break;
       }

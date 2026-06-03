@@ -20,9 +20,11 @@ import { persist } from 'zustand/middleware';
 export type RapidMlxToolId =
   | 'calculator'
   | 'now'
+  | 'unit_convert'
   | 'weather'
-  | 'web_search'
-  | 'wikipedia';
+  | 'wikipedia'
+  | 'currency'
+  | 'web_search';
 
 interface ToolState {
   enabled: boolean;
@@ -46,9 +48,11 @@ interface RapidMlxToolsConfigActions {
 const DEFAULTS: Record<RapidMlxToolId, ToolState> = {
   calculator: { enabled: true },
   now: { enabled: true },
-  weather: { enabled: false, apiKey: '' },
+  unit_convert: { enabled: true },
+  weather: { enabled: false },
+  wikipedia: { enabled: false },
+  currency: { enabled: false },
   web_search: { enabled: false, apiKey: '' },
-  wikipedia: { enabled: false, apiKey: '' },
 };
 
 

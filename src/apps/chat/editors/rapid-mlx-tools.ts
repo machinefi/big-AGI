@@ -417,10 +417,15 @@ export async function executeRapidMlxTool(
         const query = String(args?.query ?? '').trim();
         const maxResults = Number(args?.max_results);
         if (!query) throw new Error('query is required');
-        // BYOK: read the user's Tavily key out of the tools-config store.
+        // BYOK: prefer Tavily if both keys are set; fall back to Brave.
         const cfg = getRapidMlxToolsConfig();
-        const key = (cfg.web_search?.apiKey ?? '').trim();
-        if (!key) throw new Error('Tavily key not set in the tools menu');
+        const tavilyKey = (cfg.web_search?.apiKey ?? '').trim();
+        const braveKey = (cfg.web_search?.braveKey ?? '').trim();
+        let provider: 'tavily' | 'brave';
+        let key: string;
+        if (tavilyKey) { provider = 'tavily'; key = tavilyKey; }
+        else if (braveKey) { provider = 'brave'; key = braveKey; }
+        else throw new Error('Set a Tavily or Brave key in the tools menu');
         const relay = getRelayBase();
         if (!relay) throw new Error('no relay configured (open a share URL first)');
         const url = relay + '/tool/web_search';
@@ -430,6 +435,7 @@ export async function executeRapidMlxTool(
             'Accept': 'application/json',
             'Content-Type': 'application/json',
             'X-Tool-Key': key,
+            'X-Tool-Provider': provider,
           },
           body: JSON.stringify({
             query,

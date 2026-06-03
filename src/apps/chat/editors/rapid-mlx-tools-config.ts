@@ -28,7 +28,8 @@ export type RapidMlxToolId =
 
 interface ToolState {
   enabled: boolean;
-  apiKey?: string;
+  apiKey?: string;     // primary BYOK key (Tavily for web_search)
+  braveKey?: string;   // web_search only — alternate backend
 }
 
 interface RapidMlxToolsConfigState {
@@ -38,6 +39,7 @@ interface RapidMlxToolsConfigState {
 interface RapidMlxToolsConfigActions {
   setEnabled: (id: RapidMlxToolId, enabled: boolean) => void;
   setApiKey: (id: RapidMlxToolId, apiKey: string) => void;
+  setBraveKey: (id: RapidMlxToolId, braveKey: string) => void;
 }
 
 
@@ -67,6 +69,10 @@ export const useRapidMlxToolsConfig = create<RapidMlxToolsConfigState & RapidMlx
 
       setApiKey: (id, apiKey) => set((s) => ({
         tools: { ...s.tools, [id]: { ...s.tools[id], apiKey } },
+      })),
+
+      setBraveKey: (id, braveKey) => set((s) => ({
+        tools: { ...s.tools, [id]: { ...s.tools[id], braveKey } },
       })),
     }),
     {

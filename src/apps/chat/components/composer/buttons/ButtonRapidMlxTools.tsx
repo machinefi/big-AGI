@@ -33,6 +33,12 @@ type ToolMeta = {
   keyLabel?: string;
   keyPlaceholder?: string;
   keyHelpUrl?: string;
+  // Optional second BYOK slot (web_search has Tavily + Brave). The
+  // executor picks whichever is non-empty (primary preferred on tie).
+  secondaryKeyField?: 'braveKey';
+  secondaryKeyLabel?: string;
+  secondaryKeyPlaceholder?: string;
+  secondaryKeyHelpUrl?: string;
 };
 
 // Order = menu order. `keyLabel` set ⇒ BYOK input rendered when toggled on.
@@ -49,11 +55,16 @@ const TOOL_META: ToolMeta[] = [
   {
     id: 'web_search',
     label: 'Web search',
-    hint: 'Tavily — bring your own key.',
+    hint: 'Tavily or Brave — bring your own key.',
     icon: <SearchOutlinedIcon />,
+    // Two BYOK key slots; whichever you fill wins. Tavily preferred on tie.
     keyLabel: 'Tavily',
     keyPlaceholder: 'tvly-…',
     keyHelpUrl: 'https://app.tavily.com/home',
+    secondaryKeyField: 'braveKey',
+    secondaryKeyLabel: 'Brave',
+    secondaryKeyPlaceholder: 'BSA…',
+    secondaryKeyHelpUrl: 'https://api.search.brave.com/app/keys',
   },
 ];
 
@@ -67,6 +78,7 @@ function ButtonRapidMlxTools(_props: {}) {
   const toolsState = useRapidMlxToolsConfig((s) => s.tools);
   const setEnabled = useRapidMlxToolsConfig((s) => s.setEnabled);
   const setApiKey = useRapidMlxToolsConfig((s) => s.setApiKey);
+  const setBraveKey = useRapidMlxToolsConfig((s) => s.setBraveKey);
 
   const enabledCount = React.useMemo(
     () => TOOL_META.reduce((n, t) => n + (toolsState[t.id]?.enabled ? 1 : 0), 0),
@@ -171,7 +183,6 @@ function ButtonRapidMlxTools(_props: {}) {
           {TOOL_META.map((meta) => {
             const t = toolsState[meta.id] || { enabled: false };
             const needsKey = !!meta.keyLabel;
-            const missingKey = needsKey && t.enabled && !(t.apiKey ?? '').trim();
             return (
               <Box key={meta.id} sx={{ px: 1, py: 0.5 }}>
                 <Box
@@ -203,7 +214,7 @@ function ButtonRapidMlxTools(_props: {}) {
                 </Box>
 
                 {needsKey && t.enabled && (
-                  <Box sx={{ pl: 5, pr: 1, pt: 0.5 }}>
+                  <Box sx={{ pl: 5, pr: 1, pt: 0.5, display: 'grid', gap: 0.5 }}>
                     <Input
                       size='sm'
                       type='password'
@@ -216,13 +227,39 @@ function ButtonRapidMlxTools(_props: {}) {
                         </Typography>
                       }
                     />
-                    {missingKey && (
-                      <Typography level='body-xs' textColor='warning.plainColor' sx={{ mt: 0.25 }}>
-                        Paste a key{meta.keyHelpUrl ? (
-                          <> — get one at <a href={meta.keyHelpUrl} target='_blank' rel='noreferrer' onClick={(e) => e.stopPropagation()}>{new URL(meta.keyHelpUrl).host}</a></>
-                        ) : null}.
-                      </Typography>
+                    {meta.secondaryKeyField === 'braveKey' && (
+                      <Input
+                        size='sm'
+                        type='password'
+                        value={t.braveKey ?? ''}
+                        onChange={(e) => setBraveKey(meta.id, e.target.value)}
+                        placeholder={meta.secondaryKeyPlaceholder || 'API key'}
+                        startDecorator={
+                          <Typography level='body-xs' textColor='text.tertiary'>
+                            {meta.secondaryKeyLabel || 'Key'}
+                          </Typography>
+                        }
+                      />
                     )}
+                    {(() => {
+                      const primary = (t.apiKey ?? '').trim();
+                      const brave = (t.braveKey ?? '').trim();
+                      if (!primary && !brave) {
+                        return (
+                          <Typography level='body-xs' textColor='warning.plainColor'>
+                            Paste a Tavily or Brave key{meta.keyHelpUrl ? (
+                              <> — Tavily at <a href={meta.keyHelpUrl} target='_blank' rel='noreferrer' onClick={(e) => e.stopPropagation()}>{new URL(meta.keyHelpUrl).host}</a>{meta.secondaryKeyHelpUrl ? (<>, Brave at <a href={meta.secondaryKeyHelpUrl} target='_blank' rel='noreferrer' onClick={(e) => e.stopPropagation()}>{new URL(meta.secondaryKeyHelpUrl).host}</a></>) : null}</>
+                            ) : null}.
+                          </Typography>
+                        );
+                      }
+                      const active = primary ? meta.keyLabel : meta.secondaryKeyLabel;
+                      return (
+                        <Typography level='body-xs' textColor='text.tertiary'>
+                          Active: {active}{primary && brave ? ' (Tavily wins on tie)' : ''}
+                        </Typography>
+                      );
+                    })()}
                   </Box>
                 )}
               </Box>

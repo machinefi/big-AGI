@@ -11,7 +11,7 @@ import { isContentFragment } from '~/common/stores/chat/chat.fragments';
 import { getLabsHighPerformance } from '~/common/stores/store-ux-labs';
 
 import { PersonaChatMessageSpeak } from './persona/PersonaChatMessageSpeak';
-import { RAPID_MLX_TOOLS, executeRapidMlxTool } from './rapid-mlx-tools';
+import { getEnabledRapidMlxTools, executeRapidMlxTool } from './rapid-mlx-tools';
 import { getChatAutoAI, getChatThinkingPolicy, getIsNotificationEnabledForModel } from '../store-app-chat';
 import { getInstantAppChatPanesCount } from '../components/panes/store-panes-manager';
 
@@ -89,6 +89,10 @@ export async function runPersonaOnConversationHead(
     // correct message even after we rotate to the next round.
     const writeTargetId = assistantMessageId;
 
+    // Re-read the tools-config each round so the user can flip toggles
+    // mid-conversation. Only enabled tools are advertised.
+    const enabledTools = getEnabledRapidMlxTools();
+
     messageStatus = await aixChatGenerateContent_DMessage_FromConversation(
       assistantLlmId,
       chatSystemInstruction,
@@ -102,7 +106,7 @@ export async function runPersonaOnConversationHead(
         cHandler.messageEdit(writeTargetId, { ...(includeFragments && { fragments }), ...rest }, messageComplete, false);
         autoSpeaker?.handleMessage(messageOverwrite, messageComplete);
       },
-      RAPID_MLX_TOOLS,
+      enabledTools,
     );
 
     // detect tool invocations in the just-completed assistant turn.
@@ -135,8 +139,11 @@ export async function runPersonaOnConversationHead(
     // the *same* assistant message that holds the matching invocation.
     // The server adapter (openai.chatCompletions.ts) splits tool_response
     // out into its own role: 'tool' wire message keyed by invocation id.
+    // Tool execution may be async (e.g. weather fetches the relay) so
+    // we await each in sequence — order matters for the model's view
+    // of the conversation.
     for (const inv of toolInvocations) {
-      const responseFragment = executeRapidMlxTool(inv.id, inv.name, inv.args);
+      const responseFragment = await executeRapidMlxTool(inv.id, inv.name, inv.args);
       cHandler.messageFragmentAppend(writeTargetId, responseFragment, true, false);
     }
 

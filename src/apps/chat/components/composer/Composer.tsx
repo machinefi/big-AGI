@@ -68,6 +68,7 @@ import { ButtonGroupDrawRepeat } from './buttons/ButtonGroupDrawRepeat';
 import { ButtonMicContinuationMemo } from './buttons/ButtonMicContinuation';
 import { ButtonMicMemo } from './buttons/ButtonMic';
 import { ButtonMultiChatMemo } from './buttons/ButtonMultiChat';
+import { ButtonRapidMlxToolsMemo } from './buttons/ButtonRapidMlxTools';
 import { ButtonOptionsDraw } from './buttons/ButtonOptionsDraw';
 import { ComposerAttachmentDraftsList } from './llmattachments/ComposerAttachmentDraftsList';
 import { ComposerTextAreaActions } from './textarea/ComposerTextAreaActions';
@@ -774,6 +775,9 @@ export function Composer(props: {
             {/* [Desktop, Col1] Insert Multi-modal content buttons */}
             {isDesktop && showChatAttachments && (
               <Box sx={{ flexGrow: 0, display: 'grid', gap: 0.5, alignSelf: 'flex-start' }}>
+
+                {/* [desktop] rapid-mlx tools picker */}
+                <ButtonRapidMlxToolsMemo />
 
                 {/* [desktop] Attachment Sources: dropdown menu or inline buttons */}
                 <AttachmentSourcesMemo

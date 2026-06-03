@@ -28,6 +28,8 @@ import { create_FunctionCallResponse_ContentFragment } from '~/common/stores/cha
 import type { AixTools_ToolDefinition } from '~/modules/aix/server/api/aix.wiretypes';
 import type { DMessageContentFragment } from '~/common/stores/chat/chat.fragments';
 
+import { getRapidMlxToolsConfig, type RapidMlxToolId } from './rapid-mlx-tools-config';
+
 
 // CSP-safe arithmetic evaluator.
 // Supports +  -  *  /  %  ^ (exponent)  unary +/-  parentheses
@@ -176,7 +178,10 @@ function evalArithmetic(input: string): number {
 }
 
 
-export const RAPID_MLX_TOOLS: AixTools_ToolDefinition[] = [
+// Full catalog. The chat-persona loop filters this by the user's
+// rapid-mlx-tools-config before advertising to the model — the model
+// only ever sees tools the user has explicitly enabled.
+export const ALL_RAPID_MLX_TOOLS: AixTools_ToolDefinition[] = [
   aixFunctionCallTool({
     name: 'calculator',
     description:
@@ -195,18 +200,65 @@ export const RAPID_MLX_TOOLS: AixTools_ToolDefinition[] = [
       'Return the current wall-clock time as an ISO 8601 string. Use whenever the user asks about the current date or time.',
     inputSchema: z.object({}),
   }),
+  aixFunctionCallTool({
+    name: 'weather',
+    description:
+      'Look up the current weather for a city, address, or airport code. Returns temperature, conditions, humidity, wind. Uses wttr.in (free, no key).',
+    inputSchema: z.object({
+      location: z
+        .string()
+        .describe('City name, address, postal code, or airport code, e.g. "Palo Alto", "94301", "SFO", "Tokyo".'),
+    }),
+  }),
 ];
 
 
-export function executeRapidMlxTool(
+// Pull the relay base URL out of the persisted Big-AGI app-models
+// store. The splash injector writes `sources[0].setup.oaiHost` to
+// `<relay>/r/<tunnelId>`; we want the bare `https://relay`.
+function getRelayBase(): string | null {
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('app-models') : null;
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    const host = data?.state?.sources?.[0]?.setup?.oaiHost;
+    if (typeof host !== 'string' || !host) return null;
+    const m = host.match(/^(https?:\/\/[^/]+)/);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+
+/** Return only the tool definitions the user has enabled in settings. */
+export function getEnabledRapidMlxTools(): AixTools_ToolDefinition[] {
+  const cfg = getRapidMlxToolsConfig();
+  return ALL_RAPID_MLX_TOOLS.filter((t) => {
+    // aixFunctionCallTool returns { type: 'function_call', function_call: { name } }
+    const id = (t as { function_call?: { name?: string } }).function_call?.name as RapidMlxToolId | undefined;
+    return id ? !!cfg[id]?.enabled : false;
+  });
+}
+
+/** Gate check used by the executor — a sneaky model can't call a disabled tool. */
+function isToolEnabled(name: string): boolean {
+  const cfg = getRapidMlxToolsConfig();
+  return !!(cfg as Record<string, { enabled: boolean } | undefined>)[name]?.enabled;
+}
+
+export async function executeRapidMlxTool(
   invocationId: string,
   name: string,
   argsJson: string | undefined | null,
-): DMessageContentFragment {
+): Promise<DMessageContentFragment> {
   let errorMessage: string | false = false;
-  let payload: Record<string, string>;
+  let payload: Record<string, unknown>;
 
   try {
+    if (!isToolEnabled(name)) {
+      throw new Error(`tool "${name}" is disabled in settings`);
+    }
     const args = argsJson ? JSON.parse(argsJson) : {};
 
     switch (name) {
@@ -222,6 +274,17 @@ export function executeRapidMlxTool(
       }
       case 'now': {
         payload = { result: new Date().toISOString() };
+        break;
+      }
+      case 'weather': {
+        const location = String(args?.location ?? '').trim();
+        if (!location) throw new Error('location is required');
+        const relay = getRelayBase();
+        if (!relay) throw new Error('no relay configured (open a share URL first)');
+        const url = relay + '/tool/weather?location=' + encodeURIComponent(location);
+        const res = await fetch(url, { method: 'GET', headers: { 'Accept': 'application/json' } });
+        if (!res.ok) throw new Error('weather lookup failed: HTTP ' + res.status);
+        payload = await res.json();
         break;
       }
       default: {

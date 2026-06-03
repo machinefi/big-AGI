@@ -43,6 +43,21 @@ export const createAppTheme = (uiComplexityMinimal: boolean) => extendTheme({
   colorSchemes: {
     light: {
       palette: {
+        // rapid-mlx fork: "cold-spectrum" primary, lifted from quicksilverpro.io
+        // brand. Center stop 300 is the literal QSP accent #AEBBFF; higher stops
+        // are darkened so solid buttons stay legible on a white surface.
+        primary: {
+          50:  '#EEF1FF',
+          100: '#E0E5FF',
+          200: '#C3CDFF',
+          300: '#AEBBFF',
+          400: '#8593F1',
+          500: '#5F71DA',
+          600: '#4956BD',
+          700: '#3845A0',
+          800: '#2B3683',
+          900: '#1F2766',
+        },
         neutral: {
           plainColor: 'var(--joy-palette-neutral-800)',     // [700 -> 800] Dropdown menu: increase text contrast a bit
           solidBg: 'var(--joy-palette-neutral-700)',        // [500 -> 700] PageBar background & Button[solid]
@@ -69,6 +84,21 @@ export const createAppTheme = (uiComplexityMinimal: boolean) => extendTheme({
     },
     dark: {
       palette: {
+        // rapid-mlx fork: "cold-spectrum" primary (same scale as light). On dark
+        // surfaces Joy UI defaults plainColor / outlinedColor to the 300 stop,
+        // which here is the QSP literal #AEBBFF.
+        primary: {
+          50:  '#EEF1FF',
+          100: '#E0E5FF',
+          200: '#C3CDFF',
+          300: '#AEBBFF',
+          400: '#8593F1',
+          500: '#5F71DA',
+          600: '#4956BD',
+          700: '#3845A0',
+          800: '#2B3683',
+          900: '#1F2766',
+        },
         text: {
           // do not increase contrast - text.primary would scream at you
           // secondary: 'var(--joy-palette-neutral-100, #EAEEF6)',

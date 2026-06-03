@@ -18,15 +18,16 @@ export const Brand = {
     TwitterSite: '@enricoros',
   },
   URIs: {
-    Home: 'https://big-agi.com',
-    // App: 'https://get.big-agi.com',
+    // rapid-mlx fork: point at our own domain. News page issue
+    // links route to the rapid-mlx repo so feedback lands in the
+    // right inbox.
+    Home: 'https://rapidmlx.com',
     CardImage: 'https://big-agi.com/icons/card-dark-1200.png',
-    OpenRepo: 'https://github.com/enricoros/big-agi',
-    OpenProject: 'https://github.com/users/enricoros/projects/4',
-    SupportInvite: 'https://discord.gg/MkH4qj2Jp9',
-    // Twitter: 'https://x.com/enricoros',
-    PrivacyPolicy: 'https://big-agi.com/privacy',
-    TermsOfService: 'https://big-agi.com/terms',
+    OpenRepo: 'https://github.com/raullenchai/Rapid-MLX',
+    OpenProject: 'https://github.com/raullenchai/Rapid-MLX',
+    SupportInvite: '',
+    PrivacyPolicy: 'https://rapidmlx.com/privacy',
+    TermsOfService: 'https://rapidmlx.com/terms',
   },
   Docs: {
     Public: (docPage: string) => `https://big-agi.com/docs/${docPage}`,

@@ -321,6 +321,34 @@ function getRelayBase(): string | null {
   }
 }
 
+// Pull the share bearer key the splash injector stashed alongside the
+// relay URL. The rapidserver Worker requires `Authorization: Bearer
+// <share-key>` on every `/tool/*` request (Worker commit `801c994`);
+// without it the tool proxies 401 and chat tool calls fail with a
+// generic HTTP error toast.
+function getShareBearer(): string | null {
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('app-models') : null;
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    const key = data?.state?.sources?.[0]?.setup?.oaiKey;
+    return typeof key === 'string' && key ? key : null;
+  } catch {
+    return null;
+  }
+}
+
+// Build headers for every `/tool/*` fetch. Throws (so the executor's
+// outer try/catch produces a clean tool_response error visible to the
+// model + user) when no share key is set — that's the only way the
+// user can surface the "open a share URL first" hint instead of a
+// stale HTTP 401 leaking through.
+function relayAuthHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const bearer = getShareBearer();
+  if (!bearer) throw new Error('no share key (open a share URL first)');
+  return { Accept: 'application/json', Authorization: 'Bearer ' + bearer, ...extra };
+}
+
 
 /** Return only the tool definitions the user has enabled in settings. */
 export function getEnabledRapidMlxTools(): AixTools_ToolDefinition[] {
@@ -383,7 +411,7 @@ export async function executeRapidMlxTool(
         const relay = getRelayBase();
         if (!relay) throw new Error('no relay configured (open a share URL first)');
         const url = relay + '/tool/weather?location=' + encodeURIComponent(location);
-        const res = await fetch(url, { method: 'GET', headers: { 'Accept': 'application/json' } });
+        const res = await fetch(url, { method: 'GET', headers: relayAuthHeaders() });
         if (!res.ok) throw new Error('weather lookup failed: HTTP ' + res.status);
         payload = await res.json();
         break;
@@ -394,7 +422,7 @@ export async function executeRapidMlxTool(
         const relay = getRelayBase();
         if (!relay) throw new Error('no relay configured (open a share URL first)');
         const url = relay + '/tool/wikipedia?query=' + encodeURIComponent(query);
-        const res = await fetch(url, { method: 'GET', headers: { 'Accept': 'application/json' } });
+        const res = await fetch(url, { method: 'GET', headers: relayAuthHeaders() });
         if (!res.ok) throw new Error('wikipedia lookup failed: HTTP ' + res.status);
         payload = await res.json();
         break;
@@ -408,7 +436,7 @@ export async function executeRapidMlxTool(
         const relay = getRelayBase();
         if (!relay) throw new Error('no relay configured (open a share URL first)');
         const url = relay + '/tool/currency?amount=' + encodeURIComponent(String(amount)) + '&from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to);
-        const res = await fetch(url, { method: 'GET', headers: { 'Accept': 'application/json' } });
+        const res = await fetch(url, { method: 'GET', headers: relayAuthHeaders() });
         if (!res.ok) throw new Error('currency lookup failed: HTTP ' + res.status);
         payload = await res.json();
         break;
@@ -431,12 +459,11 @@ export async function executeRapidMlxTool(
         const url = relay + '/tool/web_search';
         const res = await fetch(url, {
           method: 'POST',
-          headers: {
-            'Accept': 'application/json',
+          headers: relayAuthHeaders({
             'Content-Type': 'application/json',
             'X-Tool-Key': key,
             'X-Tool-Provider': provider,
-          },
+          }),
           body: JSON.stringify({
             query,
             max_results: Number.isFinite(maxResults) ? maxResults : 5,
